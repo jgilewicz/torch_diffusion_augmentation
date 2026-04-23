@@ -1,4 +1,8 @@
 import os
+
+os.environ["HF_HUB_DISABLE_XET"] = "1"
+os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
+
 import subprocess
 from pathlib import Path
 
@@ -46,9 +50,7 @@ def train_lora(model_name, model_id):
         "--report_to=wandb",
     ]
 
-    env = os.environ.copy()
-    env["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
-    subprocess.run(cmd, check=True, env=env)
+    subprocess.run(cmd, check=True)
 
 
 def generate_images(model_name, model_id):
