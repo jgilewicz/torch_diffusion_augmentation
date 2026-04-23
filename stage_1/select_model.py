@@ -1,5 +1,7 @@
 import os
 
+os.environ["HF_HOME"] = "/workspace/hf_cache"
+os.environ["HF_HUB_CACHE"] = "/workspace/hf_cache"
 os.environ["HF_HUB_DISABLE_XET"] = "1"
 os.environ["PYTORCH_CUDA_ALLOC_CONF"] = "expandable_segments:True"
 
