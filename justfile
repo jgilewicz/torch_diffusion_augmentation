@@ -15,7 +15,7 @@ stage1:
     uv run stage_1/select_model.py
 
 login-wandb:
-    wandb login
+    uv run wandb login
 
 login-hf:
     uv run hf auth login 
