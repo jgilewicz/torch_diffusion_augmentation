@@ -7,6 +7,7 @@ import os
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
+from shutil import copy2, rmtree
 
 
 MODEL_NAME = os.getenv(
@@ -22,6 +23,8 @@ LORA_RANK = int(os.getenv("SANA_LORA_RANK", "2"))
 LORA_ALPHA = int(os.getenv("SANA_LORA_ALPHA", "2"))
 LEARNING_RATE = os.getenv("SANA_LEARNING_RATE", "1e-4")
 GRADIENT_ACCUMULATION_STEPS = int(os.getenv("SANA_GRADIENT_ACCUMULATION_STEPS", "1"))
+IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".bmp"}
+STAGING_ROOT = Path("outputs/stage2/.instance_data")
 
 
 @dataclass(frozen=True)
@@ -85,8 +88,38 @@ def validate_inputs() -> None:
         print("HF_TOKEN is not set; assuming you already ran `just login-hf`.")
 
 
+def prepare_instance_images_dir(config: DatasetConfig) -> Path:
+    source_train_dir = config.dataset_dir / "train"
+    staging_dir = STAGING_ROOT / config.name
+
+    if staging_dir.exists():
+        rmtree(staging_dir)
+    staging_dir.mkdir(parents=True, exist_ok=True)
+
+    image_paths = [
+        path
+        for path in sorted(source_train_dir.iterdir())
+        if path.is_file() and path.suffix.lower() in IMAGE_EXTENSIONS
+    ]
+
+    if not image_paths:
+        raise FileNotFoundError(
+            f"No image files found in {source_train_dir}. Expected one of: {sorted(IMAGE_EXTENSIONS)}"
+        )
+
+    for image_path in image_paths:
+        destination = staging_dir / image_path.name
+        try:
+            destination.symlink_to(image_path.resolve())
+        except OSError:
+            copy2(image_path, destination)
+
+    return staging_dir
+
+
 def train_lora(config: DatasetConfig, namespace: str) -> None:
     output_dir = OUTPUT_ROOT / config.output_name
+    instance_images_dir = prepare_instance_images_dir(config)
     hub_model_id = f"{namespace}/{config.output_name}"
     output_dir.mkdir(parents=True, exist_ok=True)
 
@@ -95,7 +128,7 @@ def train_lora(config: DatasetConfig, namespace: str) -> None:
         "launch",
         str(TRAIN_SCRIPT),
         f"--pretrained_model_name_or_path={MODEL_NAME}",
-        f"--instance_data_dir={config.dataset_dir / 'train'}",
+        f"--instance_data_dir={instance_images_dir}",
         f"--output_dir={output_dir}",
         "--mixed_precision=bf16",
         f"--resolution={RESOLUTION}",
@@ -121,6 +154,7 @@ def train_lora(config: DatasetConfig, namespace: str) -> None:
     env["WANDB_NAME"] = config.output_name
 
     print(f"Training {config.name} -> {output_dir}")
+    print(f"Using instance images from {instance_images_dir}")
     print(f"Pushing to {hub_model_id}")
     subprocess.run(cmd, check=True, env=env)
 
