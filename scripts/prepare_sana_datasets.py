@@ -4,7 +4,6 @@
 from __future__ import annotations
 
 import json
-from datasets import Dataset, Image as HFImage
 from pathlib import Path
 from shutil import copy2, rmtree
 
@@ -27,38 +26,9 @@ def article_for(name: str) -> str:
     return "an" if name[:1].lower() in {"a", "e", "i", "o", "u"} else "a"
 
 
-def build_hf_dataset(train_dir: Path, hf_output_dir: Path) -> int:
-    metadata_path = train_dir / "metadata.jsonl"
-    rows = []
-
-    with metadata_path.open("r", encoding="utf-8") as metadata_file:
-        for line in metadata_file:
-            if not line.strip():
-                continue
-
-            item = json.loads(line)
-            file_name = item["file_name"]
-            caption = item["text"]
-            image_path = train_dir / file_name
-            if not image_path.exists():
-                raise FileNotFoundError(
-                    f"Missing image referenced in metadata: {image_path}"
-                )
-
-            rows.append({"image": str(image_path), "text": caption})
-
-    if hf_output_dir.exists():
-        rmtree(hf_output_dir)
-
-    dataset = Dataset.from_list(rows).cast_column("image", HFImage())
-    dataset.save_to_disk(str(hf_output_dir))
-    return len(rows)
-
-
 def prepare_dataset(dataset_name: str, template: str) -> None:
     source_dir = DATA_DIR / dataset_name
     output_train_dir = DATA_DIR / f"sana_{dataset_name}" / "train"
-    hf_output_dir = DATA_DIR / f"sana_{dataset_name}_hf"
 
     if not source_dir.exists():
         print(f"Skipping {dataset_name}: {source_dir} does not exist")
@@ -90,10 +60,7 @@ def prepare_dataset(dataset_name: str, template: str) -> None:
                 )
                 written += 1
 
-    hf_rows = build_hf_dataset(output_train_dir, hf_output_dir)
-
     print(f"Prepared {DATA_DIR / f'sana_{dataset_name}'} ({written} images)")
-    print(f"Saved HF dataset {hf_output_dir} ({hf_rows} rows)")
 
 
 def main() -> None:
