@@ -95,9 +95,7 @@ def train_lora(config: DatasetConfig, namespace: str) -> None:
         "launch",
         str(TRAIN_SCRIPT),
         f"--pretrained_model_name_or_path={MODEL_NAME}",
-        f"--dataset_name={config.dataset_dir}",
-        "--image_column=image",
-        "--caption_column=text",
+        f"--instance_data_dir={config.dataset_dir / 'train'}",
         f"--output_dir={output_dir}",
         "--mixed_precision=bf16",
         f"--resolution={RESOLUTION}",
@@ -115,6 +113,7 @@ def train_lora(config: DatasetConfig, namespace: str) -> None:
         f"--tracker_project_name={WANDB_PROJECT}",
         "--push_to_hub",
         f"--hub_model_id={hub_model_id}",
+        "--instance_prompt=a photo",
     ]
 
     env = os.environ.copy()
