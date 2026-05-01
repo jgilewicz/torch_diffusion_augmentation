@@ -110,7 +110,6 @@ def train_lora(config: DatasetConfig, namespace: str) -> None:
         f"--lora_alpha={LORA_ALPHA}",
         f"--validation_prompt={config.validation_prompt}",
         "--report_to=wandb",
-        f"--tracker_project_name={WANDB_PROJECT}",
         "--push_to_hub",
         f"--hub_model_id={hub_model_id}",
         "--instance_prompt=a photo",
