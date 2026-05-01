@@ -8,9 +8,7 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 import wandb
-from sklearn.metrics import accuracy_score, f1_score
-from sklearn.model_selection import KFold
-from torch.utils.data import DataLoader, Dataset, Subset
+from torch.utils.data import DataLoader, Dataset
 from torchvision import models, transforms
 from tqdm import tqdm
 
@@ -23,11 +21,11 @@ DATASETS = ["cifar10", "eurosat_rgb", "beans"]
 AUGMENTATION_TYPES = ["original", "augmented", "generated"]
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
-NUM_FOLDS = 5
 BATCH_SIZE = 32
 EPOCHS = 30
 LEARNING_RATE = 1e-3
 RANDOM_SEED = 42
+TRAIN_FRACTION = 0.8
 
 
 class ImageFolderDataset(Dataset):
@@ -135,114 +133,112 @@ def train_epoch(model, dataloader, criterion, optimizer) -> float:
     return total_loss / len(dataloader.dataset)
 
 
-def evaluate(model, dataloader, criterion) -> tuple[float, float, float]:
-    model.eval()
-    total_loss = 0.0
-    all_preds = []
-    all_labels = []
+def stratified_train_indices(dataset: ImageFolderDataset) -> list[int]:
+    """Return the fixed train split used for all augmentation variants."""
+    rng = random.Random(RANDOM_SEED)
+    by_class: dict[int, list[int]] = {}
+    for idx, label in enumerate(dataset.labels):
+        by_class.setdefault(label, []).append(idx)
 
-    with torch.no_grad():
-        for images, labels in tqdm(dataloader, desc="Validation", leave=False):
-            images = images.to(DEVICE)
-            labels = labels.to(DEVICE)
+    train_indices = []
+    for indices in by_class.values():
+        shuffled = indices[:]
+        rng.shuffle(shuffled)
+        train_count = max(1, int(len(shuffled) * TRAIN_FRACTION))
+        train_indices.extend(shuffled[:train_count])
 
-            outputs = model(images)
-            loss = criterion(outputs, labels)
-            preds = torch.argmax(outputs, dim=1)
-
-            total_loss += loss.item() * images.size(0)
-            all_preds.extend(preds.cpu().numpy())
-            all_labels.extend(labels.cpu().numpy())
-
-    loss = total_loss / len(dataloader.dataset)
-    accuracy = accuracy_score(all_labels, all_preds)
-    f1 = f1_score(all_labels, all_preds, average="weighted", zero_division=0)
-    return loss, accuracy, f1
+    return sorted(train_indices)
 
 
-def train_variant(dataset_name: str, aug_type: str, data_path: Path) -> None:
+def train_variant(
+    dataset_name: str,
+    aug_type: str,
+    train_data_path: Path,
+    original_data_path: Path,
+) -> None:
     use_augmented_transform = aug_type == "augmented"
     train_transform = get_transforms(dataset_name, augmented=use_augmented_transform)
     test_transform = get_transforms(dataset_name, augmented=False)
 
-    base_dataset = ImageFolderDataset(data_path, transform=test_transform)
-    num_classes = len(base_dataset.class_to_idx)
-    fold_splits = list(
-        KFold(n_splits=NUM_FOLDS, shuffle=True, random_state=RANDOM_SEED).split(
-            base_dataset
+    original_dataset = ImageFolderDataset(original_data_path, transform=test_transform)
+    train_base_dataset = ImageFolderDataset(train_data_path, transform=test_transform)
+    if train_base_dataset.class_to_idx != original_dataset.class_to_idx:
+        raise ValueError(
+            f"{train_data_path} classes do not match {original_data_path} classes."
         )
+
+    num_classes = len(original_dataset.class_to_idx)
+    train_indices = stratified_train_indices(original_dataset)
+    print(f"  training {dataset_name}/{aug_type} on {len(train_indices)} images")
+
+    train_dataset = ImageFolderDataset(train_data_path, transform=train_transform)
+    train_subset = torch.utils.data.Subset(train_dataset, train_indices)
+    train_loader = DataLoader(
+        train_subset,
+        batch_size=BATCH_SIZE,
+        shuffle=True,
+        num_workers=0,
     )
 
-    for fold, (train_idx, test_idx) in enumerate(fold_splits):
-        print(f"  {dataset_name}/{aug_type} fold {fold + 1}/{NUM_FOLDS}")
+    model = create_model(num_classes)
+    criterion = nn.CrossEntropyLoss()
+    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
+    scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
 
-        train_dataset = ImageFolderDataset(data_path, transform=train_transform)
-        test_dataset = ImageFolderDataset(data_path, transform=test_transform)
-        train_subset = Subset(train_dataset, train_idx)
-        test_subset = Subset(test_dataset, test_idx)
+    for epoch in range(EPOCHS):
+        train_loss = train_epoch(model, train_loader, criterion, optimizer)
+        scheduler.step()
 
-        train_loader = DataLoader(
-            train_subset,
-            batch_size=BATCH_SIZE,
-            shuffle=True,
-            num_workers=0,
-        )
-        test_loader = DataLoader(
-            test_subset,
-            batch_size=BATCH_SIZE,
-            shuffle=False,
-            num_workers=0,
+        wandb.log(
+            {
+                f"{aug_type}/epoch": epoch + 1,
+                f"{aug_type}/train_loss": train_loss,
+            }
         )
 
-        model = create_model(num_classes)
-        criterion = nn.CrossEntropyLoss()
-        optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE)
-        scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=EPOCHS)
-
-        best_f1 = -1.0
-        model_path = OUTPUT_DIR / f"{dataset_name}_{aug_type}_fold{fold}.pt"
-
-        for epoch in range(EPOCHS):
-            train_loss = train_epoch(model, train_loader, criterion, optimizer)
-            val_loss, val_acc, val_f1 = evaluate(model, test_loader, criterion)
-            scheduler.step()
-
-            wandb.log(
-                {
-                    "dataset": dataset_name,
-                    "augmentation": aug_type,
-                    "fold": fold,
-                    "epoch": epoch + 1,
-                    "train_loss": train_loss,
-                    "val_loss": val_loss,
-                    "val_acc": val_acc,
-                    "val_f1": val_f1,
-                }
-            )
-
-            if val_f1 > best_f1:
-                best_f1 = val_f1
-                model_path.parent.mkdir(parents=True, exist_ok=True)
-                torch.save(model.state_dict(), model_path)
-
-        print(f"    saved {model_path} (best f1={best_f1:.4f})")
+    model_path = OUTPUT_DIR / f"{dataset_name}_{aug_type}.pt"
+    model_path.parent.mkdir(parents=True, exist_ok=True)
+    torch.save(model.state_dict(), model_path)
+    print(f"    saved {model_path}")
 
 
 def main() -> None:
     seed_everything(RANDOM_SEED)
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    wandb.init(project="PNW", name="stage3-resnet-training")
 
     for dataset_name in DATASETS:
-        for aug_type in AUGMENTATION_TYPES:
-            data_path = RESNET_DATA_DIR / dataset_name / aug_type
-            if not data_path.exists():
-                print(f"Skipping {data_path}: missing directory")
-                continue
+        original_data_path = RESNET_DATA_DIR / dataset_name / "original"
+        if not original_data_path.exists():
+            print(f"Skipping {dataset_name}: missing {original_data_path}")
+            continue
 
-            train_variant(dataset_name, aug_type, data_path)
+        wandb.init(
+            project="PNW",
+            name=f"stage3-train-{dataset_name}",
+            group="stage3-resnet-training",
+            tags=["stage3", "resnet", "train", dataset_name],
+            config={
+                "dataset": dataset_name,
+                "augmentation_types": AUGMENTATION_TYPES,
+                "batch_size": BATCH_SIZE,
+                "epochs": EPOCHS,
+                "learning_rate": LEARNING_RATE,
+                "random_seed": RANDOM_SEED,
+                "train_fraction": TRAIN_FRACTION,
+            },
+            reinit=True,
+        )
 
-    wandb.finish()
+        try:
+            for aug_type in AUGMENTATION_TYPES:
+                data_path = RESNET_DATA_DIR / dataset_name / aug_type
+                if not data_path.exists():
+                    print(f"Skipping {data_path}: missing directory")
+                    continue
+
+                train_variant(dataset_name, aug_type, data_path, original_data_path)
+        finally:
+            wandb.finish()
 
 
 if __name__ == "__main__":

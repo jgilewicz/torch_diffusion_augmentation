@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 
 import numpy as np
@@ -27,6 +28,7 @@ IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 NUM_FOLDS = 5
 BATCH_SIZE = 32
 RANDOM_SEED = 42
+TRAIN_FRACTION = 0.8
 
 
 class ImageFolderDataset(Dataset):
@@ -110,13 +112,13 @@ def evaluate_model(model, dataloader) -> tuple[float, float]:
 
 
 def evaluate_fold(
-    dataset_path: Path,
+    test_dataset_path: Path,
     model_path: Path,
     test_idx: np.ndarray,
     transform,
     num_classes: int,
 ) -> tuple[float, float]:
-    dataset = ImageFolderDataset(dataset_path, transform=transform)
+    dataset = ImageFolderDataset(test_dataset_path, transform=transform)
     test_subset = Subset(dataset, test_idx)
     test_loader = DataLoader(
         test_subset,
@@ -131,9 +133,25 @@ def evaluate_fold(
     return evaluate_model(model, test_loader)
 
 
+def stratified_eval_indices(dataset: ImageFolderDataset) -> list[int]:
+    """Return held-out original samples not used by stage_3/train_resnet.py."""
+    rng = random.Random(RANDOM_SEED)
+    by_class: dict[int, list[int]] = {}
+    for idx, label in enumerate(dataset.labels):
+        by_class.setdefault(label, []).append(idx)
+
+    eval_indices = []
+    for indices in by_class.values():
+        shuffled = indices[:]
+        rng.shuffle(shuffled)
+        train_count = max(1, int(len(shuffled) * TRAIN_FRACTION))
+        eval_indices.extend(shuffled[train_count:])
+
+    return sorted(eval_indices)
+
+
 def main() -> None:
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    wandb.init(project="PNW", name="stage3-resnet-evaluation")
     all_results = {}
 
     for dataset_name in DATASETS:
@@ -146,83 +164,121 @@ def main() -> None:
         transform = get_transform(dataset_name)
         original_dataset = ImageFolderDataset(original_path, transform=transform)
         num_classes = len(original_dataset.class_to_idx)
+        eval_indices = stratified_eval_indices(original_dataset)
+        if len(eval_indices) < NUM_FOLDS:
+            raise ValueError(
+                f"Not enough held-out samples for {NUM_FOLDS}-fold evaluation: "
+                f"{len(eval_indices)} samples in {original_path}"
+            )
+
         fold_splits = list(
             KFold(n_splits=NUM_FOLDS, shuffle=True, random_state=RANDOM_SEED).split(
-                original_dataset
+                eval_indices
             )
+        )
+
+        wandb.init(
+            project="PNW",
+            name=f"stage3-eval-{dataset_name}",
+            group="stage3-resnet-evaluation",
+            tags=["stage3", "resnet", "eval", dataset_name],
+            config={
+                "dataset": dataset_name,
+                "augmentation_types": AUGMENTATION_TYPES,
+                "num_folds": NUM_FOLDS,
+                "batch_size": BATCH_SIZE,
+                "random_seed": RANDOM_SEED,
+                "train_fraction": TRAIN_FRACTION,
+                "held_out_samples": len(eval_indices),
+            },
+            reinit=True,
         )
 
         per_fold_metrics = {aug: {"acc": [], "f1": []} for aug in AUGMENTATION_TYPES}
 
-        for aug_type in AUGMENTATION_TYPES:
-            data_path = RESNET_DATA_DIR / dataset_name / aug_type
-            if not data_path.exists():
-                print(f"  skipping {aug_type}: missing {data_path}")
-                continue
+        try:
+            for aug_type in AUGMENTATION_TYPES:
+                data_path = RESNET_DATA_DIR / dataset_name / aug_type
+                if not data_path.exists():
+                    print(f"  skipping {aug_type}: missing {data_path}")
+                    continue
+                variant_dataset = ImageFolderDataset(data_path, transform=transform)
+                if variant_dataset.class_to_idx != original_dataset.class_to_idx:
+                    raise ValueError(f"{data_path} classes do not match {original_path}")
 
-            print(f"\n  Evaluating {aug_type}")
-            for fold, (_, test_idx) in enumerate(fold_splits):
-                model_path = MODELS_DIR / f"{dataset_name}_{aug_type}_fold{fold}.pt"
+                print(f"\n  Evaluating {aug_type} on original held-out folds")
+                model_path = MODELS_DIR / f"{dataset_name}_{aug_type}.pt"
                 if not model_path.exists():
                     print(f"    missing {model_path}")
                     continue
 
-                acc, f1 = evaluate_fold(
-                    data_path,
-                    model_path,
-                    test_idx,
-                    transform,
-                    num_classes,
-                )
-                per_fold_metrics[aug_type]["acc"].append(acc)
-                per_fold_metrics[aug_type]["f1"].append(f1)
-                print(f"    fold {fold + 1}: acc={acc:.4f}, f1={f1:.4f}")
+                for fold, (_, fold_eval_positions) in enumerate(fold_splits):
+                    test_idx = np.array(
+                        [eval_indices[position] for position in fold_eval_positions]
+                    )
+                    acc, f1 = evaluate_fold(
+                        original_path,
+                        model_path,
+                        test_idx,
+                        transform,
+                        num_classes,
+                    )
+                    per_fold_metrics[aug_type]["acc"].append(acc)
+                    per_fold_metrics[aug_type]["f1"].append(f1)
+                    wandb.log(
+                        {
+                            f"{aug_type}/fold_{fold}/acc": acc,
+                            f"{aug_type}/fold_{fold}/f1": f1,
+                        }
+                    )
+                    print(f"    fold {fold + 1}: acc={acc:.4f}, f1={f1:.4f}")
 
-            if per_fold_metrics[aug_type]["acc"]:
-                avg_acc = float(np.mean(per_fold_metrics[aug_type]["acc"]))
-                std_acc = float(np.std(per_fold_metrics[aug_type]["acc"]))
-                avg_f1 = float(np.mean(per_fold_metrics[aug_type]["f1"]))
-                std_f1 = float(np.std(per_fold_metrics[aug_type]["f1"]))
-                print(
-                    f"    summary: acc={avg_acc:.4f} +/- {std_acc:.4f}, "
-                    f"f1={avg_f1:.4f} +/- {std_f1:.4f}"
-                )
-                wandb.log(
-                    {
-                        f"{dataset_name}_{aug_type}_avg_acc": avg_acc,
-                        f"{dataset_name}_{aug_type}_std_acc": std_acc,
-                        f"{dataset_name}_{aug_type}_avg_f1": avg_f1,
-                        f"{dataset_name}_{aug_type}_std_f1": std_f1,
-                    }
-                )
+                if per_fold_metrics[aug_type]["acc"]:
+                    avg_acc = float(np.mean(per_fold_metrics[aug_type]["acc"]))
+                    std_acc = float(np.std(per_fold_metrics[aug_type]["acc"]))
+                    avg_f1 = float(np.mean(per_fold_metrics[aug_type]["f1"]))
+                    std_f1 = float(np.std(per_fold_metrics[aug_type]["f1"]))
+                    print(
+                        f"    summary: acc={avg_acc:.4f} +/- {std_acc:.4f}, "
+                        f"f1={avg_f1:.4f} +/- {std_f1:.4f}"
+                    )
+                    wandb.log(
+                        {
+                            f"{aug_type}/avg_acc": avg_acc,
+                            f"{aug_type}/std_acc": std_acc,
+                            f"{aug_type}/avg_f1": avg_f1,
+                            f"{aug_type}/std_f1": std_f1,
+                        }
+                    )
 
-        variants = [aug for aug in AUGMENTATION_TYPES if per_fold_metrics[aug]["acc"]]
-        for i, aug_a in enumerate(variants):
-            for aug_b in variants[i + 1 :]:
-                acc_a = per_fold_metrics[aug_a]["acc"]
-                acc_b = per_fold_metrics[aug_b]["acc"]
-                if len(acc_a) != len(acc_b) or len(acc_a) < 2:
-                    continue
+            variants = [
+                aug for aug in AUGMENTATION_TYPES if per_fold_metrics[aug]["acc"]
+            ]
+            for i, aug_a in enumerate(variants):
+                for aug_b in variants[i + 1 :]:
+                    acc_a = per_fold_metrics[aug_a]["acc"]
+                    acc_b = per_fold_metrics[aug_b]["acc"]
+                    if len(acc_a) != len(acc_b) or len(acc_a) < 2:
+                        continue
 
-                _, p_ttest = stats.ttest_rel(acc_a, acc_b)
-                _, p_wilcox = stats.wilcoxon(acc_a, acc_b)
-                wandb.log(
-                    {
-                        f"{dataset_name}_{aug_a}_vs_{aug_b}_ttest_p": float(p_ttest),
-                        f"{dataset_name}_{aug_a}_vs_{aug_b}_wilcoxon_p": float(
-                            p_wilcox
-                        ),
-                    }
-                )
+                    _, p_ttest = stats.ttest_rel(acc_a, acc_b)
+                    _, p_wilcox = stats.wilcoxon(acc_a, acc_b)
+                    wandb.log(
+                        {
+                            f"{aug_a}_vs_{aug_b}/ttest_p": float(p_ttest),
+                            f"{aug_a}_vs_{aug_b}/wilcoxon_p": float(p_wilcox),
+                        }
+                    )
 
-        all_results[dataset_name] = {"per_fold_metrics": per_fold_metrics}
+            all_results[dataset_name] = {"per_fold_metrics": per_fold_metrics}
+        finally:
+            wandb.finish()
 
     output_path = OUTPUT_DIR / "evaluation_results.json"
     with output_path.open("w", encoding="utf-8") as output_file:
         json.dump(all_results, output_file, indent=2)
 
     print(f"\nResults saved to {output_path}")
-    wandb.finish()
 
 
 if __name__ == "__main__":
