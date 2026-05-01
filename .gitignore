@@ -19,6 +19,7 @@ venv/
 
 # Project data and training artifacts
 data/
+resnet_data/
 outputs/
 stage1/
 wandb/

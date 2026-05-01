@@ -28,6 +28,9 @@ stage2:
 stage3:
     uv run stage_3/train_resnet.py
 
+stage3-eval:
+    uv run stage_3/evaluate_resnet.py
+
 prepare-resnet-data:
     uv run scripts/prepare_resnet_data.py
 
