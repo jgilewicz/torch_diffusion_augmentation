@@ -25,6 +25,14 @@ stage1:
 stage2:
     uv run stage_2/sana_lora_finetune.py
 
+prepare-resnet-data:
+    uv run scripts/prepare_resnet_data.py
+
+generate-synthetic:
+    uv run scripts/generate_synthetic_images.py
+
+resnet-data: prepare-resnet-data generate-synthetic
+
 login-wandb:
     uv run wandb login
 
