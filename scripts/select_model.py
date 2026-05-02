@@ -4,15 +4,15 @@ import hydra
 from omegaconf import DictConfig
 
 from pnw.common import load_env_file
-from pnw.data_prep import download_datasets
+from pnw.model_selection.selection import run
 
 
 load_env_file()
 
 
-@hydra.main(version_base=None, config_path="../configs", config_name="download_datasets")
+@hydra.main(version_base=None, config_path="../configs", config_name="model_selection")
 def main(cfg: DictConfig) -> None:
-    download_datasets(cfg)
+    run(cfg)
 
 
 if __name__ == "__main__":

@@ -1,0 +1,8 @@
+data_dir: data
+output_prefix: sana_
+
+caption_templates:
+  cifar10: "a low-resolution photo of {article} {class_name}, CIFAR-10 style"
+  eurosat_rgb: "a satellite image of {class_name}, EuroSAT style"
+  beans: "a photo of a bean leaf with {class_name}"
+

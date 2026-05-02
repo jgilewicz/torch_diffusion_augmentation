@@ -1,0 +1,31 @@
+environment:
+  HF_HOME: /workspace/hf_cache
+  HF_HUB_CACHE: /workspace/hf_cache
+  HF_HUB_DISABLE_XET: "1"
+  PYTORCH_CUDA_ALLOC_CONF: expandable_segments:True
+
+models:
+  sd15: stable-diffusion-v1-5/stable-diffusion-v1-5
+  lumina2: Alpha-VLLM/Lumina-Image-2.0
+  sana: Efficient-Large-Model/Sana_600M_512px_diffusers
+
+train_scripts:
+  sd15: diffusers/examples/dreambooth/train_dreambooth_lora.py
+  lumina2: diffusers/examples/dreambooth/train_dreambooth_lora_lumina2.py
+  sana: diffusers/examples/dreambooth/train_dreambooth_lora_sana.py
+
+horse_dataset: data/horses
+output_dir: outputs/model_selection
+prompt: a photo of a horse
+num_images: 100
+num_inference_steps: 25
+lora_rank: 2
+train_steps: 300
+train_batch_size: 1
+bf16_models: [sana, lumina2]
+bf16_mixed_precision: bf16
+fp16_mixed_precision: fp16
+
+wandb:
+  project: ${oc.env:WANDB_PROJECT,PNW}
+  name: model-selection

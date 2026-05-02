@@ -1,0 +1,24 @@
+data_dir: data
+cache_subdir: .hf_cache
+artifact_subdirs:
+  - .hf_cache
+  - hf
+samples_per_class: 100
+
+datasets:
+  cifar10:
+    repo_id: uoft-cs/cifar10
+    image_column: img
+    label_column: label
+    splits: [train]
+  eurosat_rgb:
+    repo_id: giswqs/EuroSAT_RGB
+    image_column: image
+    label_column: label
+    splits: [train]
+  beans:
+    repo_id: beans
+    image_column: image
+    label_column: labels
+    splits: [train]
+

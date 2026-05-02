@@ -1,0 +1,47 @@
+base_model: Efficient-Large-Model/Sana_1600M_1024px_BF16_diffusers
+resnet_data_dir: resnet_data
+
+image_sizes:
+  cifar10: 32
+  eurosat_rgb: 64
+  beans: 224
+
+datasets:
+  cifar10:
+    lora_id: W1ndrunn3rr/SANA-LoRA-CIFAR10
+    classes:
+      - airplane
+      - automobile
+      - bird
+      - cat
+      - deer
+      - dog
+      - frog
+      - horse
+      - ship
+      - truck
+    prompt_template: "a low-resolution photo of a {class_name}, CIFAR-10 style"
+    images_per_class: 20
+  eurosat_rgb:
+    lora_id: W1ndrunn3rr/SANA-LoRA-EuroSAT-RGB
+    classes:
+      - AnnualCrop
+      - Forest
+      - HerbaceousVegetation
+      - Highway
+      - Industrial
+      - Pasture
+      - PermanentCrop
+      - Residential
+      - River
+      - SeaLake
+    prompt_template: "a satellite image of {class_name}, EuroSAT style"
+    images_per_class: 20
+  beans:
+    lora_id: W1ndrunn3rr/SANA-LoRA-Beans
+    classes:
+      - angular_leaf_spot
+      - bean_rust
+      - healthy
+    prompt_template: "a photo of a bean leaf with {class_name}"
+    images_per_class: 20

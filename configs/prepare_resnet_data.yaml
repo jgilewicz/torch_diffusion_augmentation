@@ -1,0 +1,5 @@
+data_dir: data
+resnet_data_dir: resnet_data
+datasets: [cifar10, eurosat_rgb, beans]
+augmented_samples_per_class: 20
+
