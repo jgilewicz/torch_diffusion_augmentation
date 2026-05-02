@@ -2,4 +2,6 @@ data_dir: data
 resnet_data_dir: resnet_data
 datasets: [cifar10, eurosat_rgb, beans]
 augmented_samples_per_class: 20
-
+augmented_includes_original: true
+generated_includes_original: true
+random_seed: 42

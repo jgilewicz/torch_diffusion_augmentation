@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import json
+import random
 from pathlib import Path
 from shutil import copy2, rmtree
 
 from datasets import ClassLabel, load_dataset
 from omegaconf import DictConfig
+from PIL import Image, ImageEnhance, ImageOps
 
 from pnw.common import IMAGE_EXTENSIONS, clean_name, path
 
@@ -151,6 +153,51 @@ def _copy_dataset_original(source_dir: Path, target_dir: Path, max_per_class: in
     return count
 
 
+def _augment_image(image: Image.Image, rng: random.Random) -> Image.Image:
+    augmented = image.convert("RGB")
+    if rng.random() < 0.5:
+        augmented = ImageOps.mirror(augmented)
+
+    augmented = augmented.rotate(rng.uniform(-15, 15), resample=Image.Resampling.BICUBIC)
+    augmented = ImageEnhance.Brightness(augmented).enhance(rng.uniform(0.8, 1.2))
+    augmented = ImageEnhance.Contrast(augmented).enhance(rng.uniform(0.8, 1.2))
+    augmented = ImageEnhance.Color(augmented).enhance(rng.uniform(0.8, 1.2))
+    return augmented
+
+
+def _prepare_augmented_dataset(
+    source_dir: Path,
+    target_dir: Path,
+    samples_per_class: int,
+    include_original: bool,
+    seed: int,
+) -> tuple[int, int]:
+    original_count = _copy_dataset_original(source_dir, target_dir) if include_original else 0
+    augmented_count = 0
+    rng = random.Random(seed)
+
+    for class_dir in sorted(path for path in source_dir.iterdir() if path.is_dir()):
+        source_images = [
+            image_path
+            for image_path in sorted(class_dir.iterdir())
+            if image_path.suffix.lower() in IMAGE_EXTENSIONS
+        ]
+        if not source_images:
+            continue
+
+        class_target = target_dir / class_dir.name
+        class_target.mkdir(parents=True, exist_ok=True)
+
+        for index in range(samples_per_class):
+            image_path = source_images[index % len(source_images)]
+            with Image.open(image_path) as image:
+                augmented = _augment_image(image, rng)
+            augmented.save(class_target / f"augmented_{index:05d}.png")
+            augmented_count += 1
+
+    return original_count, augmented_count
+
+
 def _setup_generated_folders(source_dir: Path, target_dir: Path) -> int:
     target_dir.mkdir(parents=True, exist_ok=True)
     count = 0
@@ -159,6 +206,12 @@ def _setup_generated_folders(source_dir: Path, target_dir: Path) -> int:
             (target_dir / class_dir.name).mkdir(exist_ok=True)
             count += 1
     return count
+
+
+def _prepare_generated_dataset(source_dir: Path, target_dir: Path, include_original: bool) -> int:
+    if include_original:
+        return _copy_dataset_original(source_dir, target_dir)
+    return _setup_generated_folders(source_dir, target_dir)
 
 
 def prepare_resnet_data(cfg: DictConfig) -> None:
@@ -184,20 +237,33 @@ def prepare_resnet_data(cfg: DictConfig) -> None:
         augmented_dir = dataset_resnet_dir / "augmented"
         if augmented_dir.exists():
             rmtree(augmented_dir)
-        augmented_count = _copy_dataset_original(
+        augmented_original_count, augmented_count = _prepare_augmented_dataset(
             source_dir,
             augmented_dir,
-            max_per_class=int(cfg.augmented_samples_per_class),
+            samples_per_class=int(cfg.augmented_samples_per_class),
+            include_original=bool(cfg.augmented_includes_original),
+            seed=int(cfg.random_seed),
         )
         print(
-            f"  Augmented: copied {augmented_count} images "
-            f"({cfg.augmented_samples_per_class} per class, transforms applied during training)"
+            f"  Augmented: copied {augmented_original_count} original images "
+            f"and created {augmented_count} augmented images "
+            f"({cfg.augmented_samples_per_class} per class)"
         )
 
         generated_dir = dataset_resnet_dir / "generated"
         if generated_dir.exists():
             rmtree(generated_dir)
-        class_count = _setup_generated_folders(source_dir, generated_dir)
-        print(f"  Generated: created {class_count} class folders")
+        generated_count = _prepare_generated_dataset(
+            source_dir,
+            generated_dir,
+            include_original=bool(cfg.generated_includes_original),
+        )
+        if cfg.generated_includes_original:
+            print(
+                f"  Generated: copied {generated_count} original images "
+                "and prepared folders for synthetic images"
+            )
+        else:
+            print(f"  Generated: created {generated_count} class folders")
 
     print(f"\nResNet data prepared in {resnet_data_dir}")

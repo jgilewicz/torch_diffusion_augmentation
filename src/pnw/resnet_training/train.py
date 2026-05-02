@@ -39,8 +39,7 @@ def train_variant(
     cfg: DictConfig,
     device: torch.device,
 ) -> None:
-    use_augmented_transform = aug_type == "augmented"
-    train_transform = get_transforms(dataset_name, use_augmented_transform, cfg.resnet)
+    train_transform = get_transforms(dataset_name, False, cfg.resnet)
     test_transform = get_transforms(dataset_name, False, cfg.resnet)
 
     original_dataset = ImageFolderDataset(original_data_path, transform=test_transform)

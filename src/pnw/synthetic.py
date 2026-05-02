@@ -42,7 +42,7 @@ def generate_dataset_images(dataset_name: str, dataset_cfg: DictConfig, cfg: Dic
                     image = pipe(prompt).images[0]
                 if resize_size:
                     image = image.resize(resize_size)
-                image.save(class_dir / f"{index:05d}.png")
+                image.save(class_dir / f"generated_{index:05d}.png")
             except Exception as error:
                 print(f"\n    Error generating image {index} for {class_name}: {error}")
                 continue
