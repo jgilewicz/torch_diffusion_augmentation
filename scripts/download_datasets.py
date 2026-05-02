@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Download datasets and save 100 images per class to data/<dataset>/<class>."""
-
 from pathlib import Path
 from shutil import rmtree
 
@@ -57,8 +54,10 @@ def save_dataset(
         if target_reached(counts, num_classes):
             break
 
-        dataset = first_split if split == splits[0] else load_dataset(
-            repo_id, split=split, cache_dir=str(CACHE_DIR)
+        dataset = (
+            first_split
+            if split == splits[0]
+            else load_dataset(repo_id, split=split, cache_dir=str(CACHE_DIR))
         )
         print(f"  {split}")
 
@@ -77,7 +76,9 @@ def save_dataset(
             if target_reached(counts, num_classes):
                 break
 
-    short = {label: count for label, count in counts.items() if count < SAMPLES_PER_CLASS}
+    short = {
+        label: count for label, count in counts.items() if count < SAMPLES_PER_CLASS
+    }
     if short:
         print(f"  saved fewer than {SAMPLES_PER_CLASS} for {len(short)} classes")
 

@@ -51,8 +51,8 @@ def main() -> None:
     print("\n" + "=" * 70)
     print("All done! resnet_data is ready with:")
     print("   - normal/    (original images)")
-    print("   - augmented/ (200 images per class with traditional augmentation)")
-    print("   - diffused/  (100 images per class generated with LoRA)")
+    print("   - augmented/ (20 images per class with traditional augmentation)")
+    print("   - diffused/  (20 images per class generated with LoRA)")
     print("=" * 70)
 
 

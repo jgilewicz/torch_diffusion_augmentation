@@ -10,9 +10,15 @@ RESNET_DATA_DIR = Path("resnet_data")
 IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp"}
 
 DATASETS = ["cifar10", "eurosat_rgb", "beans"]
+AUGMENTED_SAMPLES_PER_CLASS = 20
 
 
-def copy_dataset_original(dataset_name: str, source_dir: Path, target_dir: Path) -> int:
+def copy_dataset_original(
+    dataset_name: str,
+    source_dir: Path,
+    target_dir: Path,
+    max_per_class: int | None = None,
+) -> int:
     target_dir.mkdir(parents=True, exist_ok=True)
 
     count = 0
@@ -24,12 +30,16 @@ def copy_dataset_original(dataset_name: str, source_dir: Path, target_dir: Path)
             class_target = target_dir / class_dir.name
             class_target.mkdir(exist_ok=True)
 
+            class_count = 0
             for image_path in sorted(class_dir.iterdir()):
                 if image_path.suffix.lower() not in IMAGE_EXTENSIONS:
                     continue
+                if max_per_class is not None and class_count >= max_per_class:
+                    break
 
                 copy2(image_path, class_target / image_path.name)
                 count += 1
+                class_count += 1
 
     return count
 
@@ -69,9 +79,15 @@ def prepare_resnet_data() -> None:
         augmented_dir = dataset_resnet_dir / "augmented"
         if augmented_dir.exists():
             rmtree(augmented_dir)
-        augmented_count = copy_dataset_original(dataset_name, source_dir, augmented_dir)
+        augmented_count = copy_dataset_original(
+            dataset_name,
+            source_dir,
+            augmented_dir,
+            max_per_class=AUGMENTED_SAMPLES_PER_CLASS,
+        )
         print(
-            f"  Augmented: copied {augmented_count} images (transforms applied during training)"
+            f"  Augmented: copied {augmented_count} images "
+            f"({AUGMENTED_SAMPLES_PER_CLASS} per class, transforms applied during training)"
         )
 
         generated_dir = dataset_resnet_dir / "generated"

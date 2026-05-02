@@ -1,6 +1,3 @@
-#!/usr/bin/env python3
-"""Generate synthetic images using trained LoRA models and save to resnet_data/diffused."""
-
 from __future__ import annotations
 
 from pathlib import Path
@@ -41,7 +38,7 @@ DATASETS_CONFIG = {
             "truck",
         ],
         "prompt_template": "a low-resolution photo of a {class_name}, CIFAR-10 style",
-        "images_per_class": 100,
+        "images_per_class": 20,
     },
     "eurosat_rgb": {
         "lora_id": "W1ndrunn3rr/SANA-LoRA-EuroSAT-RGB",
@@ -58,13 +55,13 @@ DATASETS_CONFIG = {
             "SeaLake",
         ],
         "prompt_template": "a satellite image of {class_name}, EuroSAT style",
-        "images_per_class": 100,
+        "images_per_class": 20,
     },
     "beans": {
         "lora_id": "W1ndrunn3rr/SANA-LoRA-Beans",
         "classes": ["angular_leaf_spot", "bean_rust", "healthy"],
         "prompt_template": "a photo of a bean leaf with {class_name}",
-        "images_per_class": 100,
+        "images_per_class": 20,
     },
 }
 

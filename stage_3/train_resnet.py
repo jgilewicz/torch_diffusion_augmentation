@@ -134,7 +134,7 @@ def train_epoch(model, dataloader, criterion, optimizer) -> float:
 
 
 def stratified_train_indices(dataset: ImageFolderDataset) -> list[int]:
-    """Return the fixed train split used for all augmentation variants."""
+    """Return a fixed stratified train split for a dataset variant."""
     rng = random.Random(RANDOM_SEED)
     by_class: dict[int, list[int]] = {}
     for idx, label in enumerate(dataset.labels):
@@ -168,7 +168,7 @@ def train_variant(
         )
 
     num_classes = len(original_dataset.class_to_idx)
-    train_indices = stratified_train_indices(original_dataset)
+    train_indices = stratified_train_indices(train_base_dataset)
     print(f"  training {dataset_name}/{aug_type} on {len(train_indices)} images")
 
     train_dataset = ImageFolderDataset(train_data_path, transform=train_transform)
