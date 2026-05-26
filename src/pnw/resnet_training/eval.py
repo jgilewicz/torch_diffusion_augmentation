@@ -60,20 +60,13 @@ def evaluate_fold(
     return evaluate_model(model, test_loader, device)
 
 
-def _log_summary(aug_type: str, metrics: dict[str, list[float]]) -> None:
+def _log_summary(aug_type: str, metrics: dict[str, list[float]]) -> tuple[float, float, float, float]:
     avg_acc = float(np.mean(metrics["acc"]))
     std_acc = float(np.std(metrics["acc"]))
     avg_f1 = float(np.mean(metrics["f1"]))
     std_f1 = float(np.std(metrics["f1"]))
     print(f"    summary: acc={avg_acc:.4f} +/- {std_acc:.4f}, f1={avg_f1:.4f} +/- {std_f1:.4f}")
-    wandb.log(
-        {
-            f"{aug_type}/avg_acc": avg_acc,
-            f"{aug_type}/std_acc": std_acc,
-            f"{aug_type}/avg_f1": avg_f1,
-            f"{aug_type}/std_f1": std_f1,
-        }
-    )
+    return avg_acc, std_acc, avg_f1, std_f1
 
 
 def _select_paired_test(
@@ -146,6 +139,10 @@ def run(cfg: DictConfig) -> None:
             reinit=True,
         )
 
+        fold_metrics_table = wandb.Table(columns=["Augmentation", "Fold", "Accuracy", "F1"])
+        summary_metrics_table = wandb.Table(columns=["Augmentation", "Avg Accuracy", "Std Accuracy", "Avg F1", "Std F1"])
+        stats_test_table = wandb.Table(columns=["Model A", "Model B", "Shapiro p", "Normality Not Rejected", "Selected Test", "Selected p"])
+
         per_fold_metrics = {aug: {"acc": [], "f1": []} for aug in cfg.augmentation_types}
         try:
             for aug_type in cfg.augmentation_types:
@@ -176,11 +173,12 @@ def run(cfg: DictConfig) -> None:
                     )
                     per_fold_metrics[aug_type]["acc"].append(acc)
                     per_fold_metrics[aug_type]["f1"].append(f1)
-                    wandb.log({f"{aug_type}/fold_{fold}/acc": acc, f"{aug_type}/fold_{fold}/f1": f1})
+                    fold_metrics_table.add_data(aug_type, fold, acc, f1)
                     print(f"    fold {fold + 1}: acc={acc:.4f}, f1={f1:.4f}")
 
                 if per_fold_metrics[aug_type]["acc"]:
-                    _log_summary(aug_type, per_fold_metrics[aug_type])
+                    avg_acc, std_acc, avg_f1, std_f1 = _log_summary(aug_type, per_fold_metrics[aug_type])
+                    summary_metrics_table.add_data(aug_type, avg_acc, std_acc, avg_f1, std_f1)
 
             variants = [aug for aug in cfg.augmentation_types if per_fold_metrics[aug]["acc"]]
             for index, aug_a in enumerate(variants):
@@ -199,19 +197,22 @@ def run(cfg: DictConfig) -> None:
                         f"  {aug_a} vs {aug_b}: Shapiro p={test_result['shapiro_p']:.4f}, "
                         f"selected={test_result['selected_test']}, p={test_result['selected_p']:.4f}"
                     )
-                    wandb.log(
-                        {
-                            f"{aug_a}_vs_{aug_b}/shapiro_p": test_result["shapiro_p"],
-                            f"{aug_a}_vs_{aug_b}/normality_not_rejected": int(
-                                test_result["normality_not_rejected"]
-                            ),
-                            f"{aug_a}_vs_{aug_b}/selected_test_is_ttest": int(
-                                test_result["selected_test"] == "ttest_rel"
-                            ),
-                            f"{aug_a}_vs_{aug_b}/selected_test_p": test_result["selected_p"],
-                        }
+                    stats_test_table.add_data(
+                        aug_a,
+                        aug_b,
+                        test_result["shapiro_p"],
+                        bool(test_result["normality_not_rejected"]),
+                        test_result["selected_test"],
+                        test_result["selected_p"],
                     )
 
+            wandb.log(
+                {
+                    "Fold Metrics": fold_metrics_table,
+                    "Summary Metrics": summary_metrics_table,
+                    "Statistical Tests": stats_test_table,
+                }
+            )
             all_results[dataset_name] = {"per_fold_metrics": per_fold_metrics}
         finally:
             wandb.finish()
