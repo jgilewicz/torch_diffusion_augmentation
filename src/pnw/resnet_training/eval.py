@@ -76,6 +76,35 @@ def _log_summary(aug_type: str, metrics: dict[str, list[float]]) -> None:
     )
 
 
+def _select_paired_test(
+    values_a: list[float],
+    values_b: list[float],
+    alpha: float = 0.05,
+) -> dict[str, float | str | bool]:
+    if len(values_a) != len(values_b):
+        raise ValueError("Paired statistical tests require inputs of the same length.")
+    if len(values_a) < 3:
+        raise ValueError("Shapiro-Wilk requires at least 3 paired observations.")
+
+    diffs = np.asarray(values_a, dtype=float) - np.asarray(values_b, dtype=float)
+    _, shapiro_p = stats.shapiro(diffs)
+    normality_not_rejected = bool(shapiro_p >= alpha)
+
+    if normality_not_rejected:
+        _, selected_p = stats.ttest_rel(values_a, values_b)
+        selected_test = "ttest_rel"
+    else:
+        _, selected_p = stats.wilcoxon(values_a, values_b)
+        selected_test = "wilcoxon"
+
+    return {
+        "shapiro_p": float(shapiro_p),
+        "normality_not_rejected": normality_not_rejected,
+        "selected_p": float(selected_p),
+        "selected_test": selected_test,
+    }
+
+
 def run(cfg: DictConfig) -> None:
     print(OmegaConf.to_yaml(cfg, resolve=True))
     output_dir = path(cfg.output_dir)
@@ -158,14 +187,28 @@ def run(cfg: DictConfig) -> None:
                 for aug_b in variants[index + 1 :]:
                     acc_a = per_fold_metrics[aug_a]["acc"]
                     acc_b = per_fold_metrics[aug_b]["acc"]
-                    if len(acc_a) != len(acc_b) or len(acc_a) < 2:
+                    if len(acc_a) != len(acc_b) or len(acc_a) < 3:
+                        print(
+                            f"  skipping significance test for {aug_a} vs {aug_b}: "
+                            "Shapiro-Wilk requires at least 3 paired folds"
+                        )
                         continue
-                    _, p_ttest = stats.ttest_rel(acc_a, acc_b)
-                    _, p_wilcox = stats.wilcoxon(acc_a, acc_b)
+
+                    test_result = _select_paired_test(acc_a, acc_b)
+                    print(
+                        f"  {aug_a} vs {aug_b}: Shapiro p={test_result['shapiro_p']:.4f}, "
+                        f"selected={test_result['selected_test']}, p={test_result['selected_p']:.4f}"
+                    )
                     wandb.log(
                         {
-                            f"{aug_a}_vs_{aug_b}/ttest_p": float(p_ttest),
-                            f"{aug_a}_vs_{aug_b}/wilcoxon_p": float(p_wilcox),
+                            f"{aug_a}_vs_{aug_b}/shapiro_p": test_result["shapiro_p"],
+                            f"{aug_a}_vs_{aug_b}/normality_not_rejected": int(
+                                test_result["normality_not_rejected"]
+                            ),
+                            f"{aug_a}_vs_{aug_b}/selected_test_is_ttest": int(
+                                test_result["selected_test"] == "ttest_rel"
+                            ),
+                            f"{aug_a}_vs_{aug_b}/selected_test_p": test_result["selected_p"],
                         }
                     )
 
