@@ -22,8 +22,7 @@ def generate_dataset_images(dataset_name: str, dataset_cfg: DictConfig, cfg: Dic
     pipe = DiffusionPipeline.from_pretrained(
         cfg.base_model,
         torch_dtype=torch.bfloat16,
-        device_map=device,
-    )
+    ).to(device)
     pipe.load_lora_weights(dataset_cfg.lora_id)
 
     dataset_output_dir = path(cfg.resnet_data_dir) / dataset_name / "generated"
