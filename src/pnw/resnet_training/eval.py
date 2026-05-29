@@ -7,7 +7,7 @@ import torch
 import wandb
 from omegaconf import DictConfig, OmegaConf
 from scipy import stats
-from sklearn.metrics import accuracy_score, f1_score
+from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
 from sklearn.model_selection import KFold
 from torch.utils.data import DataLoader, Subset
 from tqdm import tqdm
@@ -17,7 +17,7 @@ from pnw.datasets import ImageFolderDataset, class_count
 from pnw.resnet import create_resnet18, get_transforms, stratified_indices
 
 
-def evaluate_model(model, dataloader, device: torch.device) -> tuple[float, float]:
+def evaluate_model(model, dataloader, device: torch.device) -> tuple[float, float, float, float, float]:
     model.eval()
     all_preds = []
     all_labels = []
@@ -33,6 +33,9 @@ def evaluate_model(model, dataloader, device: torch.device) -> tuple[float, floa
     return (
         accuracy_score(all_labels, all_preds),
         f1_score(all_labels, all_preds, average="weighted", zero_division=0),
+        f1_score(all_labels, all_preds, average="macro", zero_division=0),
+        precision_score(all_labels, all_preds, average="weighted", zero_division=0),
+        recall_score(all_labels, all_preds, average="weighted", zero_division=0),
     )
 
 
@@ -44,7 +47,7 @@ def evaluate_fold(
     num_classes: int,
     cfg: DictConfig,
     device: torch.device,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float, float]:
     dataset = ImageFolderDataset(test_dataset_path, transform=transform)
     test_subset = Subset(dataset, test_idx)
     test_loader = DataLoader(
@@ -60,13 +63,20 @@ def evaluate_fold(
     return evaluate_model(model, test_loader, device)
 
 
-def _log_summary(aug_type: str, metrics: dict[str, list[float]]) -> tuple[float, float, float, float]:
-    avg_acc = float(np.mean(metrics["acc"]))
-    std_acc = float(np.std(metrics["acc"]))
-    avg_f1 = float(np.mean(metrics["f1"]))
-    std_f1 = float(np.std(metrics["f1"]))
-    print(f"    summary: acc={avg_acc:.4f} +/- {std_acc:.4f}, f1={avg_f1:.4f} +/- {std_f1:.4f}")
-    return avg_acc, std_acc, avg_f1, std_f1
+def _log_summary(aug_type: str, metrics: dict[str, list[float]]) -> dict[str, float]:
+    summary = {}
+    for metric_name in ["acc", "f1_weighted", "f1_macro", "precision", "recall"]:
+        vals = metrics[metric_name]
+        summary[f"avg_{metric_name}"] = float(np.mean(vals))
+        summary[f"std_{metric_name}"] = float(np.std(vals))
+    print(
+        f"    summary: acc={summary['avg_acc']:.4f} +/- {summary['std_acc']:.4f}, "
+        f"f1_w={summary['avg_f1_weighted']:.4f} +/- {summary['std_f1_weighted']:.4f}, "
+        f"f1_m={summary['avg_f1_macro']:.4f} +/- {summary['std_f1_macro']:.4f}, "
+        f"prec={summary['avg_precision']:.4f} +/- {summary['std_precision']:.4f}, "
+        f"rec={summary['avg_recall']:.4f} +/- {summary['std_recall']:.4f}"
+    )
+    return summary
 
 
 def _select_paired_test(
@@ -132,6 +142,7 @@ def run(cfg: DictConfig) -> None:
 
         wandb.init(
             project=cfg.wandb.project,
+            entity=cfg.wandb.get("entity"),
             name=f"resnet-eval-{dataset_name}",
             group=cfg.wandb.group,
             tags=list(cfg.wandb.tags) + [dataset_name],
@@ -139,11 +150,26 @@ def run(cfg: DictConfig) -> None:
             reinit=True,
         )
 
-        fold_metrics_table = wandb.Table(columns=["Augmentation", "Fold", "Accuracy", "F1"])
-        summary_metrics_table = wandb.Table(columns=["Augmentation", "Avg Accuracy", "Std Accuracy", "Avg F1", "Std F1"])
+        fold_metrics_table = wandb.Table(columns=["Augmentation", "Fold", "Accuracy", "F1 Weighted", "F1 Macro", "Precision", "Recall"])
+        summary_metrics_table = wandb.Table(columns=[
+            "Augmentation",
+            "Avg Accuracy", "Std Accuracy",
+            "Avg F1 Weighted", "Std F1 Weighted",
+            "Avg F1 Macro", "Std F1 Macro",
+            "Avg Precision", "Std Precision",
+            "Avg Recall", "Std Recall"
+        ])
         stats_test_table = wandb.Table(columns=["Model A", "Model B", "Shapiro p", "Normality Not Rejected", "Selected Test", "Selected p"])
 
-        per_fold_metrics = {aug: {"acc": [], "f1": []} for aug in cfg.augmentation_types}
+        per_fold_metrics = {
+            aug: {
+                "acc": [],
+                "f1_weighted": [],
+                "f1_macro": [],
+                "precision": [],
+                "recall": []
+            } for aug in cfg.augmentation_types
+        }
         try:
             for aug_type in cfg.augmentation_types:
                 data_path = path(cfg.resnet_data_dir) / dataset_name / aug_type
@@ -162,7 +188,7 @@ def run(cfg: DictConfig) -> None:
 
                 for fold, (_, fold_eval_positions) in enumerate(fold_splits):
                     test_idx = np.array([eval_indices[position] for position in fold_eval_positions])
-                    acc, f1 = evaluate_fold(
+                    acc, f1_w, f1_m, prec, rec = evaluate_fold(
                         original_path,
                         model_path,
                         test_idx,
@@ -172,13 +198,23 @@ def run(cfg: DictConfig) -> None:
                         device,
                     )
                     per_fold_metrics[aug_type]["acc"].append(acc)
-                    per_fold_metrics[aug_type]["f1"].append(f1)
-                    fold_metrics_table.add_data(aug_type, fold, acc, f1)
-                    print(f"    fold {fold + 1}: acc={acc:.4f}, f1={f1:.4f}")
+                    per_fold_metrics[aug_type]["f1_weighted"].append(f1_w)
+                    per_fold_metrics[aug_type]["f1_macro"].append(f1_m)
+                    per_fold_metrics[aug_type]["precision"].append(prec)
+                    per_fold_metrics[aug_type]["recall"].append(rec)
+                    fold_metrics_table.add_data(aug_type, fold, acc, f1_w, f1_m, prec, rec)
+                    print(f"    fold {fold + 1}: acc={acc:.4f}, f1_w={f1_w:.4f}, f1_m={f1_m:.4f}")
 
                 if per_fold_metrics[aug_type]["acc"]:
-                    avg_acc, std_acc, avg_f1, std_f1 = _log_summary(aug_type, per_fold_metrics[aug_type])
-                    summary_metrics_table.add_data(aug_type, avg_acc, std_acc, avg_f1, std_f1)
+                    summary = _log_summary(aug_type, per_fold_metrics[aug_type])
+                    summary_metrics_table.add_data(
+                        aug_type,
+                        summary["avg_acc"], summary["std_acc"],
+                        summary["avg_f1_weighted"], summary["std_f1_weighted"],
+                        summary["avg_f1_macro"], summary["std_f1_macro"],
+                        summary["avg_precision"], summary["std_precision"],
+                        summary["avg_recall"], summary["std_recall"]
+                    )
 
             variants = [aug for aug in cfg.augmentation_types if per_fold_metrics[aug]["acc"]]
             for index, aug_a in enumerate(variants):

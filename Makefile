@@ -8,7 +8,7 @@ include .env
 export
 endif
 
-.PHONY: help setup patch-diffusers download-datasets prepare-sana-datasets datasets model-selection lora-finetune resnet-train resnet-eval stage1 stage2 stage3 stage3-eval prepare-resnet-data generate-synthetic resnet-data login-wandb login-hf clean clean-all
+.PHONY: help setup patch-diffusers download-datasets prepare-sana-datasets datasets model-selection lora-finetune resnet-train resnet-eval stage1 stage2 stage3 stage3-eval prepare-resnet-data generate-synthetic resnet-data login-wandb login-hf clean clean-all reproduce
 
 help:
 	@awk 'BEGIN {FS = ":.*## "} /^[a-zA-Z0-9_-]+:.*## / {printf "%-24s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
@@ -47,6 +47,8 @@ stage1: model-selection
 stage2: lora-finetune
 stage3: resnet-train
 stage3-eval: resnet-eval
+
+reproduce: setup download-datasets prepare-sana-datasets prepare-resnet-data generate-synthetic resnet-train resnet-eval ## Run full reproduction pipeline (excluding lora-finetune).
 
 prepare-resnet-data: ## Prepare original and augmented ResNet folders.
 	uv run python scripts/prepare_resnet_data.py

@@ -13,9 +13,11 @@ from pnw.datasets import ImageFolderDataset, class_count
 from pnw.resnet import create_resnet18, get_transforms, stratified_indices
 
 
-def train_epoch(model, dataloader, criterion, optimizer, device: torch.device) -> float:
+def train_epoch(model, dataloader, criterion, optimizer, device: torch.device) -> tuple[float, float]:
     model.train()
     total_loss = 0.0
+    correct = 0
+    total = 0
 
     for images, labels in tqdm(dataloader, desc="Training", leave=False):
         images = images.to(device)
@@ -28,7 +30,11 @@ def train_epoch(model, dataloader, criterion, optimizer, device: torch.device) -
         optimizer.step()
         total_loss += loss.item() * images.size(0)
 
-    return total_loss / len(dataloader.dataset)
+        preds = torch.argmax(outputs, dim=1)
+        correct += (preds == labels).sum().item()
+        total += labels.size(0)
+
+    return total_loss / len(dataloader.dataset), correct / total
 
 
 def train_variant(
@@ -70,9 +76,13 @@ def train_variant(
     scheduler = optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=int(cfg.epochs))
 
     for epoch in range(int(cfg.epochs)):
-        train_loss = train_epoch(model, train_loader, criterion, optimizer, device)
+        train_loss, train_acc = train_epoch(model, train_loader, criterion, optimizer, device)
         scheduler.step()
-        wandb.log({f"{aug_type}/epoch": epoch + 1, f"{aug_type}/train_loss": train_loss})
+        wandb.log({
+            f"{aug_type}/epoch": epoch + 1,
+            f"{aug_type}/train_loss": train_loss,
+            f"{aug_type}/train_acc": train_acc,
+        })
 
     model_path = path(cfg.output_dir) / f"{dataset_name}_{aug_type}.pt"
     model_path.parent.mkdir(parents=True, exist_ok=True)
@@ -94,6 +104,7 @@ def run(cfg: DictConfig) -> None:
 
         wandb.init(
             project=cfg.wandb.project,
+            entity=cfg.wandb.get("entity"),
             name=f"resnet-train-{dataset_name}",
             group=cfg.wandb.group,
             tags=list(cfg.wandb.tags) + [dataset_name],

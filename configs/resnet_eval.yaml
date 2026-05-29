@@ -28,5 +28,6 @@ resnet:
 
 wandb:
   project: ${oc.env:WANDB_PROJECT,PNW}
+  entity: ${oc.env:WANDB_ENTITY,PNW}
   group: resnet-evaluation
   tags: [resnet, eval]
