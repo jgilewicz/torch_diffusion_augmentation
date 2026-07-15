@@ -1,4 +1,4 @@
-# PNW
+# Torch Diffusion Augmentation
 
 This repository runs an image augmentation experiment based on SANA LoRA fine-tuning and ResNet evaluation.
 
